@@ -1,0 +1,43 @@
+---- contig: consensus@0@0 ----
+
+ - Between positions 0 and 10000 of the contig, I've created these contigs:
+   - consensus@0@0_0_-1
+ - Between positions 10000 and 20000 of the contig, I've created these contigs:
+   - consensus@0@0_10000_2
+   - consensus@0@0_10000_0
+   - consensus@0@0_10000_1
+ - Between positions 20000 and 30000 of the contig, I've created these contigs:
+   - consensus@0@0_20000_0
+   - consensus@0@0_20000_1
+ - Between positions 30000 and 40000 of the contig, I've created these contigs:
+   - consensus@0@0_30000_0
+   - consensus@0@0_30000_2
+   - consensus@0@0_30000_1
+ - Between positions 40000 and 90000 of the contig, I've created these contigs:
+   - consensus@0@0_40000_-1
+ - Between positions 90000 and 100000 of the contig, I've created these contigs:
+   - consensus@0@0_90000_0
+   - consensus@0@0_90000_1
+   - consensus@0@0_90000_2
+ - Between positions 100001 and 100000 of the contig, I've created these contigs:
+   - consensus@0@0_100001_0
+
+---- contig: consensus@1@0 ----
+
+ - Between positions 0 and 10000 of the contig, I've created these contigs:
+   - consensus@1@0_0_0
+   - consensus@1@0_0_2
+   - consensus@1@0_0_1
+ - Between positions 10000 and 90000 of the contig, I've created these contigs:
+   - consensus@1@0_10000_-1
+ - Between positions 90001 and 90000 of the contig, I've created these contigs:
+   - consensus@1@0_90001_0
+
+---- contig: consensus@2@0 ----
+
+ - Between positions 0 and 10000 of the contig, I've created these contigs:
+   - consensus@2@0_0_-1
+ - Between positions 10001 and 10000 of the contig, I've created these contigs:
+   - consensus@2@0_10001_0
+
+
