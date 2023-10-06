@@ -154,9 +154,6 @@ void parse_split_file(
                     // for (auto i : list_of_read_names){
                     //     cout << i << " ";
                     // }
-                    if (start == 35000){
-                        cout << "at 35000 " << list_of_read_names[readIdxs[r]] << endl;
-                    }
                     if (name_of_neighbors.find(list_of_read_names[readIdxs[r]]) != name_of_neighbors.end()){ //this can happen for overlaps that are discarded in read_SAM but were not in the gro file
                         partitions_with_the_minus_2[ name_of_neighbors[list_of_read_names[readIdxs[r]]]] = partition[r];
                     }

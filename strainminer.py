@@ -18,6 +18,12 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.impute import KNNImputer
 from sklearn.metrics import pairwise_distances
 
+options = {
+	"WLSACCESSID":"0a86f2c0-f46c-471d-aeac-11a44d571d78",
+	"WLSSECRET":"8c1cc87c-8b3a-46af-846c-e4e8732676c4",
+	"LICENSEID":2420373
+}
+
 import time
 from argparse import ArgumentParser
 
@@ -167,8 +173,9 @@ def quasibiclique(X_matrix, error_rate = 0.025):
             if ratio_of_1 > 0.99 and x*y>seed_rows*seed_cols:
                 seed_rows = x
                 seed_cols = y
-                
-    model = grb.Model('max_model')
+
+    env = grb.Env(params=options)      
+    model = grb.Model('max_model', env=env)          
     model.Params.OutputFlag = 0
     model.Params.MIPGAP = 0.05
     model.Params.TimeLimit = 20
@@ -559,10 +566,11 @@ if __name__ == '__main__':
                 matrix,regions,steps = pre_processing(X_matrix,min_col_quality)
                 steps = biclustering_full_matrix(matrix, regions, steps, min_row_quality, min_col_quality,error_rate=0.025)
                 clusters = post_processing(matrix, steps, reads,distance_thresh = 0.05)
+
                 
             reads_ = []
             labels_ = []
-            if len(clusters) > 1 and len(dict_of_sus_pos) > 0:
+            if len(dict_of_sus_pos) > 0 and len(clusters) > 1 :
                 for idx,cluster in enumerate(clusters):
                     for read in cluster:
                         reads_.append(read)
