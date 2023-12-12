@@ -18,10 +18,16 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.impute import KNNImputer
 from sklearn.metrics import pairwise_distances
 
+# options = { #this is the license of Roland Faure, please don't use it
+# 	"WLSACCESSID":"0a86f2c0-f46c-471d-aeac-11a44d571d78",
+# 	"WLSSECRET":"8c1cc87c-8b3a-46af-846c-e4e8732676c4",
+# 	"LICENSEID":2420373
+# }
+
 options = {
-	"WLSACCESSID":"0a86f2c0-f46c-471d-aeac-11a44d571d78",
-	"WLSSECRET":"8c1cc87c-8b3a-46af-846c-e4e8732676c4",
-	"LICENSEID":2420373
+	"WLSACCESSID":"xxxxxx",
+	"WLSSECRET":"xxxxxx",
+	"LICENSEID":000000
 }
 
 import time
