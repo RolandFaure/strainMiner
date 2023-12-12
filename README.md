@@ -14,7 +14,8 @@ Additionally, you wil need to have installed:
 - sklearn
 - gurobipy with a valid gurobi license
 
-Additionally, you will need to have installed `pysam`,  and `gurobipy`, to use with a valid gurobi license. 
+Additionally, you will need to have installed `pysam`,  and `gurobipy`, to use with a valid gurobi license.
+To use your gurobi license, modify lines 27 to 31 of `strainminer.py`
 
 Then download and build strainMiner:
 ```
