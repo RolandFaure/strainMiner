@@ -1,6 +1,8 @@
 # strainMiner
 separating strains in metagenomic assemblies using ILP
 
+*WARNING* strainMiner is not actively updated. Please go to [HairSplitter](https://github.com/RolandFaure/hairsplitter) to see a more up-to-date strain separator. The strainMiner presented here nonetheless is the only one implementing ILP, and thus can perform slightly better than HairSplitter in some cases.
+
 ## Installation
 
 You will need to have installed in your PATH (for example in a conda environment):
