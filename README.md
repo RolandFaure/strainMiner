@@ -49,7 +49,7 @@ optional arguments:
 
 ## Citation & Contribution
 
-A pre-print is available on HAL, (https://inria.hal.science/hal-04349675)[https://inria.hal.science/hal-04349675].
+A pre-print is available on HAL, [https://inria.hal.science/hal-04349675](https://inria.hal.science/hal-04349675).
 
 Tam Minh Khac Truong developped and implemented the read separation module, under the supervision of Roland Faure and Rumen Andonov. Roland Faure integrated the module into the HairSplitter pipeline to produce a complete software.
 
