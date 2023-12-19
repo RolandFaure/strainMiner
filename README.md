@@ -1,7 +1,7 @@
 # strainMiner
 separating strains in metagenomic assemblies using ILP
 
-*WARNING* strainMiner is not actively updated. Please go to [HairSplitter](https://github.com/RolandFaure/hairsplitter) to see a more up-to-date strain separator. The strainMiner presented here nonetheless is the only one implementing ILP, and thus can perform slightly better than HairSplitter in some cases.
+*WARNING* strainMiner is not actively supported. Please go to [HairSplitter](https://github.com/RolandFaure/hairsplitter) to see an up-to-date strain separator. The strainMiner presented here nonetheless is the only one implementing ILP, and thus can perform slightly better than HairSplitter in some cases.
 
 ## Installation
 
@@ -46,3 +46,11 @@ optional arguments:
                         Name of the output folder
   --window WINDOW       Size of window to perform read separation (must be at least twice shorter than average read length) [5000]
 ```
+
+## Citation & Contribution
+
+A pre-print is available on HAL, (https://inria.hal.science/hal-04349675)[https://inria.hal.science/hal-04349675].
+
+Tam Minh Khac Truong developped and implemented the read separation module, under the supervision of Roland Faure and Rumen Andonov. Roland Faure integrated the module into the HairSplitter pipeline to produce a complete software.
+
+
