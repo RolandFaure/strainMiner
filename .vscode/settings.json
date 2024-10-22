@@ -1,0 +1,107 @@
+{
+    "[python]": {
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "always"
+        },
+        "editor.defaultFormatter": "charliermarsh.ruff",
+    },
+    "[toml]": {
+        "editor.formatOnSave": true
+    },
+    "autoDocstring.docstringFormat": "numpy",
+    "coverage-gutters.coverageFileNames": [
+        "tests/coverage/cov.lcov"
+    ],
+    "coverage-gutters.coverageReportFileName": "tests/coverage/html/index.html",
+    "coverage-gutters.ignoredPathGlobs": "**/{node_modules,venv,.venv,vendor,.tox,.condaenv*,backup}/**",
+    "coverage-gutters.showLineCoverage": true,
+    "coverage-gutters.showRulerCoverage": false,
+    "editor.formatOnSave": false,
+    "files.exclude": {
+        "**/__pycache__": true,
+        ".mypy_cache": true,
+        ".pytest_cache": true
+    },
+    "ltex.checkFrequency": "manual",
+    "mypy-type-checker.args": [
+        "--config-file=${workspaceFolder}/mypy.ini",
+        "--exclude=${workspaceFolder}/tests"
+    ],
+    "mypy-type-checker.preferDaemon": false,
+    "python.analysis.extraPaths": [],
+    "python.analysis.typeCheckingMode": "off",
+    "python.testing.pytestArgs": [
+        "--config-file=${workspaceFolder}/pytest.ini"
+    ],
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "todo-tree.filtering.excludeGlobs": [
+        "**/node_modules",
+        "**/.vscode/settings.json",
+        "backup"
+    ],
+    "todo-tree.general.tags": [
+        "BUG",
+        "HACK",
+        "FIXME",
+        "TODO",
+        "XXX",
+        "OPTIMIZE",
+        "IDEA",
+        "DOCU",
+        "TOTEST",
+        "REFACTOR"
+    ],
+    "todo-tree.highlights.customHighlight": {
+        "BUG": {
+            "foreground": "#FF7F50",
+            "icon": "bug"
+        },
+        "DOCU": {
+            "foreground": "#008B8B",
+            "icon": "repo"
+        },
+        "FIXME": {
+            "foreground": "#B22222",
+            "icon": "flame"
+        },
+        "HACK": {
+            "foreground": "#2F4F4F",
+            "icon": "tools"
+        },
+        "IDEA": {
+            "foreground": "#FFD700",
+            "icon": "light-bulb"
+        },
+        "OPTIMIZE": {
+            "foreground": "#CD5C5C",
+            "icon": "rocket"
+        },
+        "REFACTOR": {
+            "foreground": "#8FBC8F",
+            "icon": "git-branch"
+        },
+        "TODO": {
+            "foreground": "#006400",
+            "icon": "circle"
+        },
+        "TOTEST": {
+            "foreground": "#ADD8E6",
+            "icon": "beaker"
+        },
+        "XXX": {
+            "foreground": "#2F4F4F",
+            "icon": "x"
+        }
+    },
+    "todo-tree.highlights.defaultHighlight": {
+        "background": "#1d1f23",
+        "fontStyle": "italic",
+        "foreground": "#006400",
+        "gutterIcon": true,
+        "type": "text-and-comment"
+    },
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportUndefinedVariable": "none"
+    }
+}

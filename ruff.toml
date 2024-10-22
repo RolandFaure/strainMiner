@@ -1,0 +1,16 @@
+[lint]
+    select = ["ALL", "PL"]
+    ignore = [
+        # missing-type-cls
+        "ANN102",
+        # missing-type-self
+        "ANN101",
+        # multi-line-summary-second-line
+        "D213",
+        # one-blank-line-before-class
+        "D203",
+        # flake8-todos
+        "TD",
+    ]
+    exclude = ["*venv*", "src/strainminer/graphunzip/*"]
+    unfixable = ["T201", "T202"]

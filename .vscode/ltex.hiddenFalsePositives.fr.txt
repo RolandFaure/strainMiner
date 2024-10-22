@@ -1,0 +1,2 @@
+{"rule":"FR_SPELLING_RULE","sentence":"^\\QProblème de la sous-matrice binaire complète (all-ones matrix) (SMBC)\\E$"}
+{"rule":"UPPERCASE_SENTENCE_START","sentence":"^\\Qvoulu et résoudre le problème optimal avec la sous-instance (on s'attend à ce que cette sous-instance renvoie la solution optimale de l'instance complète)\\E$"}

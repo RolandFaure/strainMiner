@@ -1,0 +1,12 @@
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - python=3.10.*
+  - bioconda::flye=2.9.*
+  - bioconda::samtools=1.20.*
+  - bioconda::minimap2=2.28.*
+  - bioconda::racon=1.5.*
+  - pip
+  - pip:
+    - -r requirements-linters.txt
