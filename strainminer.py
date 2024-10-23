@@ -3,115 +3,143 @@ strainMiner
 Authors: Tam Khac Min Truong, Roland Faure
 """
 
-__version__ = '1.0.0'
+__version__ = "1.0.0"
 
-import pandas as pd 
-import numpy as np
-import sys
 import os
+import sys
+import time
+from argparse import ArgumentParser
+from pathlib import Path
 
 import gurobipy as grb
+import numpy as np
+import pandas as pd
 import pysam as ps
-
-from sklearn.cluster import FeatureAgglomeration
-from sklearn.cluster import AgglomerativeClustering
+from sklearn.cluster import AgglomerativeClustering, FeatureAgglomeration
 from sklearn.impute import KNNImputer
 from sklearn.metrics import pairwise_distances
 
-# options = { #this is the license of Roland Faure, please don't use it
-# 	"WLSACCESSID":"0a86f2c0-f46c-471d-aeac-11a44d571d78",
-# 	"WLSSECRET":"8c1cc87c-8b3a-46af-846c-e4e8732676c4",
-# 	"LICENSEID":2420373
-# }
+import strainminer_logging.contig as contig_log
+import strainminer_logging.loci_window as lociwin_log
+import strainminer_logging.postprocess as postprocess_log
+import strainminer_logging.strips.bipart as bipart_log
+import strainminer_logging.strips.hca as hca_log
+import strainminer_logging.strips.qbc as qbc_log
+from strainminer_logging.binmatrix import BinMatrixStats
 
-options = {
-	"WLSACCESSID":"xxxxxx",
-	"WLSSECRET":"xxxxxx",
-	"LICENSEID":000000
-}
+options = {"WLSACCESSID": "xxxxxx", "WLSSECRET": "xxxxxx", "LICENSEID": 000000}
 
-import time
-from argparse import ArgumentParser
 
-def get_data(file, contig_name,start_pos,stop_pos):
-    #INPUT: a SORTED and INDEXED Bam file
+def get_data(file, contig_name, start_pos, stop_pos):
+    # INPUT: a SORTED and INDEXED Bam file
     # Go through a window w on a contig and select suspicious positions
-    itercol = file.pileup(contig = contig_name,start = start_pos,stop = stop_pos,truncate=True,min_base_quality=10)
+    itercol = file.pileup(
+        contig=contig_name,
+        start=start_pos,
+        stop=stop_pos,
+        truncate=True,
+        min_base_quality=10,
+    )
     list_of_sus_pos = {}
 
     for pileupcolumn in itercol:
-        if pileupcolumn.nsegments >=5:
-            
+        if pileupcolumn.nsegments >= 5:
             tmp_dict = {}
             sequence = np.char.upper(np.array(pileupcolumn.get_query_sequences()))
-            bases, freq = np.unique(np.array(sequence),return_counts=True)
-    
-            if bases[0] =='':    
-                ratio = freq[1:]/sum(freq[1:])
+            bases, freq = np.unique(np.array(sequence), return_counts=True)
+
+            if bases[0] == "":
+                ratio = freq[1:] / sum(freq[1:])
                 bases = bases[1:]
             else:
-                ratio = freq/sum(freq)
-            
-            if len(ratio) >0:
+                ratio = freq / sum(freq)
+
+            if len(ratio) > 0:
                 idx_sort = np.argsort(ratio)
-                
-                if ratio[idx_sort[-1]]<0.95:
-                    for pileupread in pileupcolumn.pileups:        
+
+                if ratio[idx_sort[-1]] < 0.95:
+                    for pileupread in pileupcolumn.pileups:
                         if not pileupread.is_del and not pileupread.is_refskip:
                             # query position is None if is_del or is_refskip is set.
-                            if pileupread.alignment.query_sequence[pileupread.query_position] == bases[idx_sort[-1]]:
-                                tmp_dict[pileupread.alignment.query_name] =  1
-                            elif pileupread.alignment.query_sequence[pileupread.query_position] == bases[idx_sort[-2]]:
-                                tmp_dict[pileupread.alignment.query_name] =  0
-                            else :
+                            if (
+                                pileupread.alignment.query_sequence[
+                                    pileupread.query_position
+                                ]
+                                == bases[idx_sort[-1]]
+                            ):
+                                tmp_dict[pileupread.alignment.query_name] = 1
+                            elif (
+                                pileupread.alignment.query_sequence[
+                                    pileupread.query_position
+                                ]
+                                == bases[idx_sort[-2]]
+                            ):
+                                tmp_dict[pileupread.alignment.query_name] = 0
+                            else:
                                 tmp_dict[pileupread.alignment.query_name] = np.nan
-                
-                    list_of_sus_pos[pileupcolumn.reference_pos] = tmp_dict        
+
+                    list_of_sus_pos[pileupcolumn.reference_pos] = tmp_dict
     return list_of_sus_pos
 
-def pre_processing(X_matrix, min_col_quality = 3):
+
+def pre_processing(X_matrix, min_col_quality=3):
+    _low_quality_hca_prestrip_stats_collection = hca_log.HCAPreStripStatsCollection()
+    _high_quality_hca_prestrip_stats_collection = hca_log.HCAPreStripStatsCollection()
+    _low_quality_hca_strip_stats_collection = (
+        hca_log.LowQualityHCAStripStatsCollection()
+    )
+    _high_quality_hca_strip_stats_collection = hca_log.HCAStripStatsCollection()
     ###Filling the missing values using KNN
-    m,n = X_matrix.shape
-    if m>1 and n>1:
-        imputer = KNNImputer(n_neighbors= 10)
+    m, n = X_matrix.shape
+    if m > 1 and n > 1:
+        imputer = KNNImputer(n_neighbors=10)
         matrix = imputer.fit_transform(X_matrix)
-        upper,lower = 0.7,0.3
-        matrix[(matrix>=upper)] = 1
-        matrix[(matrix<=lower)] = 0
-        matrix[(matrix<upper) * (matrix>lower)] = -1
+        upper, lower = 0.7, 0.3
+        matrix[(matrix >= upper)] = 1
+        matrix[(matrix <= lower)] = 0
+        matrix[(matrix < upper) * (matrix > lower)] = -1
     else:
-        matrix = X_matrix  
-    
+        matrix = X_matrix
+
     ###Split in to distinct regions(columns)
     regions = [list(range(matrix.shape[1]))]
     inhomogenious_regions = [list(range(matrix.shape[1]))]
     steps = []
-    
-    if m>5 and n > 15:
-        agglo=FeatureAgglomeration(n_clusters=None,metric = 'hamming', linkage = 'complete',distance_threshold=0.35)
+
+    if m > 5 and n > 15:
+        agglo = FeatureAgglomeration(
+            n_clusters=None,
+            metric="hamming",
+            linkage="complete",
+            distance_threshold=0.35,
+        )
         agglo.fit(matrix)
-        labels = (agglo.labels_)
+        labels = agglo.labels_
         splitted_cols = {}
-    
-        for idx,label in enumerate(labels):
+
+        for idx, label in enumerate(labels):
             if label in splitted_cols:
                 splitted_cols[label].append(idx)
             else:
                 splitted_cols[label] = [idx]
-        
-        regions = []        
+
+        regions = []
         for cols in splitted_cols.values():
-            
             ##if the region is too large, remove the noisiest reads by splitting them with a strict distance
             ##threshold, then take only the significant clusters
             if len(cols) > 15:
-                matrix_reg = matrix[:,cols].copy()
-                agglo=FeatureAgglomeration(n_clusters=None,metric = 'hamming', linkage = 'complete',distance_threshold=0.025)
+                matrix_reg = matrix[:, cols].copy()
+                agglo = FeatureAgglomeration(
+                    n_clusters=None,
+                    metric="hamming",
+                    linkage="complete",
+                    distance_threshold=0.025,
+                )
                 agglo.fit(matrix_reg)
-                labels = (agglo.labels_)
-                groups = {}
+                labels = agglo.labels_
+                groups: dict[int, list[int]] = {}
 
-                for idx,label in enumerate(labels):
+                for idx, label in enumerate(labels):
                     if label in groups:
                         groups[label].append(cols[idx])
                     else:
@@ -120,307 +148,515 @@ def pre_processing(X_matrix, min_col_quality = 3):
                 for c in groups.values():
                     if len(c) >= min_col_quality:
                         regions.append(c)
-            elif len(cols)>=min_col_quality:
+                        _high_quality_hca_prestrip_stats_collection.append(
+                            BinMatrixStats.from_bin_dataframe(
+                                matrix[:, c],
+                            )
+                        )
+                    else:
+                        _low_quality_hca_prestrip_stats_collection.append(
+                            BinMatrixStats.from_bin_dataframe(
+                                matrix[:, c],
+                            )
+                        )
+            elif len(cols) >= min_col_quality:
                 regions.append(cols)
-                
-        inhomogenious_regions = []        
-        for region in regions:
-            thres = (min_col_quality/len(region))
-            matrix_reg = matrix[:,region].copy()
-            matrix_reg[matrix_reg==-1] = 0
-            x_matrix = (matrix_reg.sum(axis = 1))/len(region)
-            if len(x_matrix[(x_matrix>=thres)*(x_matrix<=1-thres)]) > 10:
+                _high_quality_hca_prestrip_stats_collection.append(
+                    BinMatrixStats.from_bin_dataframe(
+                        matrix[:, c],
+                    )
+                )
+            else:
+                _low_quality_hca_prestrip_stats_collection.append(
+                    BinMatrixStats.from_bin_dataframe(matrix[:, cols])
+                )
+
+        inhomogenious_regions = []
+        for strip_number, region in enumerate(regions):
+            thres = min_col_quality / len(region)
+            matrix_reg = matrix[:, region].copy()
+            matrix_reg[matrix_reg == -1] = 0
+            x_matrix = (matrix_reg.sum(axis=1)) / len(region)
+            if len(x_matrix[(x_matrix >= thres) * (x_matrix <= 1 - thres)]) > 10:
                 inhomogenious_regions.append(region)
+                _low_quality_hca_strip_stats_collection.append(
+                    hca_log.LowQualityHCAStripStats(
+                        strip_number,
+                        len(region),
+                        [BinMatrixStats.from_bin_dataframe(matrix[:, region])],
+                    )
+                )
             else:
                 ###cut into 2 regions of 1 and 0
-                agglo = AgglomerativeClustering(n_clusters = 2, metric = 'hamming', linkage = 'complete')
-                agglo.fit(matrix_reg)  
-                labels = agglo.labels_  
-                cluster1,cluster0 = [],[]
-                for idx,label in enumerate(labels):
+                agglo = AgglomerativeClustering(
+                    n_clusters=2, metric="hamming", linkage="complete"
+                )
+                agglo.fit(matrix_reg)
+                labels = agglo.labels_
+                cluster1, cluster0 = [], []
+                for idx, label in enumerate(labels):
                     if label == 0:
                         cluster0.append(idx)
                     else:
                         cluster1.append(idx)
-                mat_cl1 = matrix_reg[cluster1,:].sum()/(len(cluster1)*len(region))
-                mat_cl0 = matrix_reg[cluster0,:].sum()/(len(cluster0)*len(region))
+                mat_cl1 = matrix_reg[cluster1, :].sum() / (len(cluster1) * len(region))
+                mat_cl0 = matrix_reg[cluster0, :].sum() / (len(cluster0) * len(region))
 
-                if (mat_cl0 > 0.9 or mat_cl0<0.1) and (mat_cl1 > 0.9 or mat_cl1<0.1):
-                    steps.append((cluster1,cluster0,region))
-            
-    return matrix, inhomogenious_regions, steps
+                if (mat_cl0 > 0.9 or mat_cl0 < 0.1) and (
+                    mat_cl1 > 0.9 or mat_cl1 < 0.1
+                ):
+                    steps.append((cluster1, cluster0, region))
+                    _high_quality_hca_strip_stats_collection.append(
+                        hca_log.HCAStripStats(
+                            strip_number,
+                            len(region),
+                            [
+                                bipart_log.BiPartStats(
+                                    0,
+                                    bipart_log.BiPartClass.ZERO,
+                                    BinMatrixStats.from_bin_dataframe(
+                                        matrix_reg[cluster0, :]
+                                    ),
+                                ),
+                                bipart_log.BiPartStats(
+                                    1,
+                                    bipart_log.BiPartClass.ONE,
+                                    BinMatrixStats.from_bin_dataframe(
+                                        matrix_reg[cluster1, :]
+                                    ),
+                                ),
+                            ],
+                        )
+                    )
+                else:
+                    _low_quality_hca_strip_stats_collection.append(
+                        hca_log.LowQualityHCAStripStats(
+                            strip_number,
+                            len(region),
+                            [
+                                BinMatrixStats.from_bin_dataframe(
+                                    matrix_reg[cluster0, :]
+                                ),
+                                BinMatrixStats.from_bin_dataframe(
+                                    matrix_reg[cluster1, :]
+                                ),
+                            ],
+                        )
+                    )
 
-def quasibiclique(X_matrix, error_rate = 0.025):
-    #Finding quasibiclique of a binary matrix
+    return (
+        matrix,
+        inhomogenious_regions,
+        steps,
+        hca_log.HCAProcessStats(
+            _low_quality_hca_prestrip_stats_collection,
+            _high_quality_hca_prestrip_stats_collection,
+            _low_quality_hca_strip_stats_collection,
+            _high_quality_hca_strip_stats_collection,
+        ),
+    )
+
+
+def quasibiclique(X_matrix, error_rate=0.025):
+    # Finding quasibiclique of a binary matrix
     X_problem = X_matrix.copy()
-    
-    cols_sorted = np.argsort(X_problem.sum(axis = 0))[::-1]
-    rows_sorted = np.argsort(X_problem.sum(axis = 1))[::-1]
-    
+
+    cols_sorted = np.argsort(X_problem.sum(axis=0))[::-1]
+    rows_sorted = np.argsort(X_problem.sum(axis=1))[::-1]
+
     m = len(rows_sorted)
     n = len(cols_sorted)
-    if m==0 or n==0:
-        return ([],[],False)
-    #SELECTING MOSTLY 1 REGION FOR SEEDING
-    seed_rows = m//3
-    seed_cols = n//3
-    if n>50:
+    if m == 0 or n == 0:
+        return ([], [], False)
+    # SELECTING MOSTLY 1 REGION FOR SEEDING
+    seed_rows = m // 3
+    seed_cols = n // 3
+    if n > 50:
         step_n = 10
     else:
         step_n = 2
-    for x in range(m//3,m,10):
-        for y in range(n//3,n,step_n):
+    for x in range(m // 3, m, 10):
+        for y in range(n // 3, n, step_n):
             nb_of_1_in_seed = 0
             for i in rows_sorted[:x]:
                 for j in cols_sorted[:y]:
                     nb_of_1_in_seed = nb_of_1_in_seed + X_problem[i][j]
-            ratio_of_1 = nb_of_1_in_seed/(x*y)
-            
-            if ratio_of_1 > 0.99 and x*y>seed_rows*seed_cols:
+            ratio_of_1 = nb_of_1_in_seed / (x * y)
+
+            if ratio_of_1 > 0.99 and x * y > seed_rows * seed_cols:
                 seed_rows = x
                 seed_cols = y
 
-    env = grb.Env(params=options)      
-    model = grb.Model('max_model', env=env)          
+    env = grb.Env(params=options)
+    model = grb.Model("max_model", env=env)
     model.Params.OutputFlag = 0
     model.Params.MIPGAP = 0.05
     model.Params.TimeLimit = 20
-    
-    #SEEDING
-    #VARS
-    #print('seeding')
-    
-    lpRows = model.addVars(rows_sorted[:seed_rows], lb=0, ub=1, vtype=grb.GRB.INTEGER, name='rw')
-    lpCols = model.addVars(cols_sorted[:seed_cols], lb=0, ub=1, vtype=grb.GRB.INTEGER, name='cl')
-    lpCells = model.addVars([(r, c) for r in rows_sorted[:seed_rows] for c in cols_sorted[:seed_cols]], lb=0, ub=1, vtype=grb.GRB.INTEGER, name='ce')
-    #print('size current problem', len(lpRows),len(lpCols))
-    #OBJ FCT
-    model.setObjective(grb.quicksum([(X_problem[c[0]][c[1]]) * lpCells[c] for c in lpCells]), grb.GRB.MAXIMIZE)
-    
-    #print()
-    #print('Seeding', len(lpRows),len(lpCols))
-    #print()
-    
-    #CONSTRAINTS
+
+    # SEEDING
+    # VARS
+    # print('seeding')
+
+    lpRows = model.addVars(
+        rows_sorted[:seed_rows], lb=0, ub=1, vtype=grb.GRB.INTEGER, name="rw"
+    )
+    lpCols = model.addVars(
+        cols_sorted[:seed_cols], lb=0, ub=1, vtype=grb.GRB.INTEGER, name="cl"
+    )
+    lpCells = model.addVars(
+        [(r, c) for r in rows_sorted[:seed_rows] for c in cols_sorted[:seed_cols]],
+        lb=0,
+        ub=1,
+        vtype=grb.GRB.INTEGER,
+        name="ce",
+    )
+    # print('size current problem', len(lpRows),len(lpCols))
+    # OBJ FCT
+    model.setObjective(
+        grb.quicksum([(X_problem[c[0]][c[1]]) * lpCells[c] for c in lpCells]),
+        grb.GRB.MAXIMIZE,
+    )
+
+    # print()
+    # print('Seeding', len(lpRows),len(lpCols))
+    # print()
+
+    # CONSTRAINTS
     for cell in lpCells:
-        model.addConstr(1 - lpRows[cell[0]] >= lpCells[cell], f'{cell}_cr')
-        model.addConstr(1 - lpCols[cell[1]] >= lpCells[cell], f'{cell}_cc')
-        model.addConstr(1 - lpRows[cell[0]] - lpCols[cell[1]]<= lpCells[cell], f'{cell}_ccr')
-        
-    model.addConstr(error_rate*grb.quicksum(lpCells) >= grb.quicksum(
-            [lpCells[coord]*(1-X_problem[coord[0]][coord[1]]) for coord in lpCells]), 'err_thrshld')
-    
+        model.addConstr(1 - lpRows[cell[0]] >= lpCells[cell], f"{cell}_cr")
+        model.addConstr(1 - lpCols[cell[1]] >= lpCells[cell], f"{cell}_cc")
+        model.addConstr(
+            1 - lpRows[cell[0]] - lpCols[cell[1]] <= lpCells[cell], f"{cell}_ccr"
+        )
+
+    model.addConstr(
+        error_rate * grb.quicksum(lpCells)
+        >= grb.quicksum(
+            [lpCells[coord] * (1 - X_problem[coord[0]][coord[1]]) for coord in lpCells]
+        ),
+        "err_thrshld",
+    )
+
     model.optimize()
-    
+
     ##EXTEND BY ROW
-    #print('row extend')
+    # print('row extend')
     rw = []
     cl = []
     for var in model.getVars():
         if var.X == 0:
             name = var.VarName
-            if name[0:2] == 'rw':
+            if name[0:2] == "rw":
                 rw += [int(name[3:-1])]
-            elif name[0:2] == 'cl':
-                cl += [int(name[3:-1])]        
-    
-    rem_rows = [r for r in rows_sorted if r not in lpRows.keys()]
-    rem_rows_sum = X_problem[rem_rows][:,cl].sum(axis=1)
-    potential_rows = [r for idx,r in enumerate(rem_rows) if rem_rows_sum[idx]>0.5*len(cl)]
-    
-    lpRows.update(model.addVars(potential_rows, lb=0, ub=1, vtype=grb.GRB.INTEGER, name='rw'))
-    
-    new_cells = model.addVars([(r, c) for r in potential_rows for c in cl], lb=0, ub=1, vtype=grb.GRB.INTEGER, name='ce')
-    lpCells.update(new_cells)
-    
-    #print()
-    #print('ROW', len(lpRows),len(lpCols))
-    #print()
-    
-    model.setObjective(grb.quicksum([(X_problem[c[0]][c[1]]) * lpCells[c] for c in lpCells]), grb.GRB.MAXIMIZE)
-    
-    for cell in new_cells:
-        model.addConstr(1 - lpRows[cell[0]] >= lpCells[cell], f'{cell}_cr')
-        model.addConstr(1 - lpCols[cell[1]] >= lpCells[cell], f'{cell}_cc')
-        model.addConstr(1 - lpRows[cell[0]] - lpCols[cell[1]]<= lpCells[cell], f'{cell}_ccr')
-        
-    model.addConstr(error_rate*grb.quicksum(lpCells) >= grb.quicksum(
-            [lpCells[coord]*(1-X_problem[coord[0]][coord[1]]) for coord in lpCells]), 'err_thrshld')
-    
-    model.optimize()
-    
-    rw = []
-    cl = []
-    for var in model.getVars():
-        if var.X == 0:
-            name = var.VarName
-            if name[0:2] == 'rw':
-                rw += [int(name[3:-1])]
-            elif name[0:2] == 'cl':
+            elif name[0:2] == "cl":
                 cl += [int(name[3:-1])]
-                
-    rem_cols = [c for c in cols_sorted if c not in lpCols.keys()]
-    rem_cols_sum = X_problem[rw][:,rem_cols].sum(axis=0)
-    potential_cols = [c for idx,c in enumerate(rem_cols) if rem_cols_sum[idx]>0.9*len(cl)]
-    
-    lpCols.update(model.addVars(potential_cols, lb=0, ub=1, vtype=grb.GRB.INTEGER, name='cl'))
-    
-    new_cells = model.addVars([(r, c) for r in rw for c in potential_cols], lb=0, ub=1, vtype=grb.GRB.INTEGER, name='ce')
+
+    rem_rows = [r for r in rows_sorted if r not in lpRows.keys()]
+    rem_rows_sum = X_problem[rem_rows][:, cl].sum(axis=1)
+    potential_rows = [
+        r for idx, r in enumerate(rem_rows) if rem_rows_sum[idx] > 0.5 * len(cl)
+    ]
+
+    lpRows.update(
+        model.addVars(potential_rows, lb=0, ub=1, vtype=grb.GRB.INTEGER, name="rw")
+    )
+
+    new_cells = model.addVars(
+        [(r, c) for r in potential_rows for c in cl],
+        lb=0,
+        ub=1,
+        vtype=grb.GRB.INTEGER,
+        name="ce",
+    )
     lpCells.update(new_cells)
-    
-    #print()
-    #print('COL', len(lpRows),len(lpCols))
-    #print()
-    
-    model.setObjective(grb.quicksum([(X_problem[c[0]][c[1]]) * lpCells[c] for c in lpCells]), grb.GRB.MAXIMIZE)
-    
+
+    # print()
+    # print('ROW', len(lpRows),len(lpCols))
+    # print()
+
+    model.setObjective(
+        grb.quicksum([(X_problem[c[0]][c[1]]) * lpCells[c] for c in lpCells]),
+        grb.GRB.MAXIMIZE,
+    )
+
     for cell in new_cells:
-        model.addConstr(1 - lpRows[cell[0]] >= lpCells[cell], f'{cell}_cr')
-        model.addConstr(1 - lpCols[cell[1]] >= lpCells[cell], f'{cell}_cc')
-        model.addConstr(1 - lpRows[cell[0]] - lpCols[cell[1]]<= lpCells[cell], f'{cell}_ccr')
-    
-    model.addConstr(error_rate*grb.quicksum(lpCells) >= grb.quicksum(
-            [lpCells[coord]*(1-X_problem[coord[0]][coord[1]]) for coord in lpCells]), 'err_thrshld')
-    
-    
+        model.addConstr(1 - lpRows[cell[0]] >= lpCells[cell], f"{cell}_cr")
+        model.addConstr(1 - lpCols[cell[1]] >= lpCells[cell], f"{cell}_cc")
+        model.addConstr(
+            1 - lpRows[cell[0]] - lpCols[cell[1]] <= lpCells[cell], f"{cell}_ccr"
+        )
+
+    model.addConstr(
+        error_rate * grb.quicksum(lpCells)
+        >= grb.quicksum(
+            [lpCells[coord] * (1 - X_problem[coord[0]][coord[1]]) for coord in lpCells]
+        ),
+        "err_thrshld",
+    )
+
     model.optimize()
-    
+
     rw = []
     cl = []
     for var in model.getVars():
         if var.X == 0:
             name = var.VarName
-            if name[0:2] == 'rw':
+            if name[0:2] == "rw":
                 rw += [int(name[3:-1])]
-            elif name[0:2] == 'cl':
-                cl += [int(name[3:-1])]  
-    
+            elif name[0:2] == "cl":
+                cl += [int(name[3:-1])]
+
+    rem_cols = [c for c in cols_sorted if c not in lpCols.keys()]
+    rem_cols_sum = X_problem[rw][:, rem_cols].sum(axis=0)
+    potential_cols = [
+        c for idx, c in enumerate(rem_cols) if rem_cols_sum[idx] > 0.9 * len(cl)
+    ]
+
+    lpCols.update(
+        model.addVars(potential_cols, lb=0, ub=1, vtype=grb.GRB.INTEGER, name="cl")
+    )
+
+    new_cells = model.addVars(
+        [(r, c) for r in rw for c in potential_cols],
+        lb=0,
+        ub=1,
+        vtype=grb.GRB.INTEGER,
+        name="ce",
+    )
+    lpCells.update(new_cells)
+
+    # print()
+    # print('COL', len(lpRows),len(lpCols))
+    # print()
+
+    model.setObjective(
+        grb.quicksum([(X_problem[c[0]][c[1]]) * lpCells[c] for c in lpCells]),
+        grb.GRB.MAXIMIZE,
+    )
+
+    for cell in new_cells:
+        model.addConstr(1 - lpRows[cell[0]] >= lpCells[cell], f"{cell}_cr")
+        model.addConstr(1 - lpCols[cell[1]] >= lpCells[cell], f"{cell}_cc")
+        model.addConstr(
+            1 - lpRows[cell[0]] - lpCols[cell[1]] <= lpCells[cell], f"{cell}_ccr"
+        )
+
+    model.addConstr(
+        error_rate * grb.quicksum(lpCells)
+        >= grb.quicksum(
+            [lpCells[coord] * (1 - X_problem[coord[0]][coord[1]]) for coord in lpCells]
+        ),
+        "err_thrshld",
+    )
+
+    model.optimize()
+
+    rw = []
+    cl = []
+    for var in model.getVars():
+        if var.X == 0:
+            name = var.VarName
+            if name[0:2] == "rw":
+                rw += [int(name[3:-1])]
+            elif name[0:2] == "cl":
+                cl += [int(name[3:-1])]
+
     # status check
     status = model.Status
-    
-    if status in (grb.GRB.INF_OR_UNBD, grb.GRB.INFEASIBLE, grb.GRB.UNBOUNDED):
-        return (rw,cl,False)
-    elif status == grb.GRB.TIME_LIMIT:
-        return (rw,cl,True)
-    elif status != grb.GRB.OPTIMAL:
-        return (rw,cl,False)
-               
-    return rw,cl,True
 
-def binary_clustering_step(X_matrix, error_rate = 0.025, min_row_quality = 5, min_col_quality = 3):
-    
-    #Clustering single step
+    if status in (grb.GRB.INF_OR_UNBD, grb.GRB.INFEASIBLE, grb.GRB.UNBOUNDED):
+        return (rw, cl, False)
+    elif status == grb.GRB.TIME_LIMIT:
+        return (rw, cl, True)
+    elif status != grb.GRB.OPTIMAL:
+        return (rw, cl, False)
+
+    return rw, cl, True
+
+
+def binary_clustering_step(
+    X_matrix, error_rate=0.025, min_row_quality=5, min_col_quality=3
+):
+    # Clustering single step
     ###fill the empty space and create an inverse matrix in order to cluster 0
     X_problem = X_matrix
     X_problem_1 = X_problem.copy()
     X_problem_1[X_problem_1 == -1] = 0
     X_problem_0 = X_problem.copy()
     X_problem_0[X_problem_0 == -1] = 1
-    X_problem_0 = (X_problem_0-1)*-1
-    
+    X_problem_0 = (X_problem_0 - 1) * -1
+
     remain_rows = range(X_problem_1.shape[0])
     current_cols = range(X_problem_1.shape[1])
     clustering_1 = True
     status = True
-    rw1,rw0 = [],[]
-    
-    while len(remain_rows)>=min_row_quality and len(current_cols)>=min_col_quality and status:
+    rw1, rw0 = [], []
+
+    while (
+        len(remain_rows) >= min_row_quality
+        and len(current_cols) >= min_col_quality
+        and status
+    ):
         if clustering_1:
-            rw,cl,status = quasibiclique(X_problem_1[remain_rows][:,current_cols],error_rate)
+            rw, cl, status = quasibiclique(
+                X_problem_1[remain_rows][:, current_cols], error_rate
+            )
         else:
-            rw,cl,status = quasibiclique(X_problem_0[remain_rows][:,current_cols],error_rate)
-             
+            rw, cl, status = quasibiclique(
+                X_problem_0[remain_rows][:, current_cols], error_rate
+            )
+
         rw = [remain_rows[r] for r in rw]
         cl = [current_cols[c] for c in cl]
-        
-        if len(cl)>0:
-            #filter out extremely noisy columns
-            if len(rw) == 0 :
+
+        if len(cl) > 0:
+            # filter out extremely noisy columns
+            if len(rw) == 0:
                 current_cols = []
-            else :
+            else:
                 if clustering_1:
-                    col_homogeneity = X_problem_1[rw][:,cl].sum(axis=0)/len(rw)
+                    col_homogeneity = X_problem_1[rw][:, cl].sum(axis=0) / len(rw)
                 else:
-                    col_homogeneity = X_problem_0[rw][:,cl].sum(axis=0)/len(rw)
-                current_cols = [c for idx,c in enumerate(cl) if col_homogeneity[idx] > 5*error_rate]
+                    col_homogeneity = X_problem_0[rw][:, cl].sum(axis=0) / len(rw)
+                current_cols = [
+                    c
+                    for idx, c in enumerate(cl)
+                    if col_homogeneity[idx] > 5 * error_rate
+                ]
         else:
-            status = False   
-            
+            status = False
+
         if status:
             if clustering_1:
                 rw1 = rw1 + [r for r in rw]
             else:
-                rw0 = rw0 + [r for r in rw]  
-                
+                rw0 = rw0 + [r for r in rw]
+
         remain_rows = [r for r in remain_rows if r not in rw]
-        
+
         clustering_1 = not clustering_1
-    
-    return rw1,rw0,current_cols
 
-def biclustering_full_matrix(X_matrix, regions, steps, min_row_quality = 5, min_col_quality = 3,error_rate = 0.025):
-    #Iteratively single step cluster through the whole matrix
-    print('Clustering', len(regions), 'regions')
+    return rw1, rw0, current_cols
+
+
+def biclustering_full_matrix(
+    X_matrix, regions, steps, min_row_quality=5, min_col_quality=3, error_rate=0.025
+):
+    _high_quality_qbc_strip_stats_collection = qbc_log.QBCStripStatsCollection()
+    _qbc_trash_strip_stats: qbc_log.QBCTrashStripStats | None = None
+    # Iteratively single step cluster through the whole matrix
+    print("Clustering", len(regions), "regions")
     steps_result = steps
-    if len(regions)>0:
-        print('Clustering region: ', end= "")
-    for idx,region in enumerate(regions):   
+    if len(regions) > 0:
+        print("Clustering region: ", end="")
+
+    _strip_number = len(steps_result)
+    _trash_cols: list[int] = []
+    for idx, region in enumerate(regions):
         remain_cols = region
-        
+
         status = True
-        if len(remain_cols)>=min_col_quality:
-            while len(remain_cols)>=min_col_quality and status:
-
-                reads1,reads0,cols = binary_clustering_step(X_matrix[:,remain_cols], error_rate = error_rate,min_row_quality = 5, min_col_quality = 3) 
+        if len(remain_cols) >= min_col_quality:
+            while len(remain_cols) >= min_col_quality and status:
+                reads1, reads0, cols = binary_clustering_step(
+                    X_matrix[:, remain_cols],
+                    error_rate=error_rate,
+                    min_row_quality=5,
+                    min_col_quality=3,
+                )
                 cols = [remain_cols[c] for c in cols]
-                
-                if len(cols) == 0:
-                    ###not fiding anything of significance so stop to save time 
-                    status = False
-                else:
-                    steps_result.append((reads1,reads0,cols))
-                    remain_cols = [c for c in remain_cols if c not in cols]
-        print(idx+1, end = " finished ")
-    if len(regions)>0:
-        print()                           
-    return [step for step in steps_result if len(step[0])>0 and len(step[1])>0 and len(step[2])>=min_col_quality]
 
-def post_processing(X_matrix, steps, read_names,distance_thresh = 0.1): 
-    #cut the reads into read groups
+                if len(cols) == 0:
+                    ###not fiding anything of significance so stop to save time
+                    status = False
+                    _trash_cols.extend(remain_cols)
+                else:
+                    steps_result.append((reads1, reads0, cols))
+                    _high_quality_qbc_strip_stats_collection.append(
+                        qbc_log.QBCStripStats(
+                            _strip_number,
+                            len(cols),
+                            [
+                                bipart_log.BiPartStats(
+                                    0,
+                                    bipart_log.BiPartClass.ZERO,
+                                    BinMatrixStats.from_bin_dataframe(
+                                        X_matrix[reads0:, cols]
+                                    ),
+                                ),
+                                bipart_log.BiPartStats(
+                                    1,
+                                    bipart_log.BiPartClass.ONE,
+                                    BinMatrixStats.from_bin_dataframe(
+                                        X_matrix[reads1:, cols]
+                                    ),
+                                ),
+                            ],
+                        )
+                    )
+                    remain_cols = [c for c in remain_cols if c not in cols]
+                _strip_number += 1
+        if remain_cols:
+            _trash_cols.extend(remain_cols)
+        print(idx + 1, end=" finished ")
+    if len(regions) > 0:
+        print()
+    if _trash_cols:
+        _qbc_trash_strip_stats = qbc_log.QBCTrashStripStats(
+            _strip_number, BinMatrixStats.from_bin_dataframe(X_matrix[:, _trash_cols])
+        )
+    return (
+        [
+            step
+            for step in steps_result
+            if len(step[0]) > 0 and len(step[1]) > 0 and len(step[2]) >= min_col_quality
+        ],
+        qbc_log.QBCProcessStats(
+            _high_quality_qbc_strip_stats_collection,
+            _qbc_trash_strip_stats,
+        ),
+    )
+
+
+def post_processing(X_matrix, steps, read_names, distance_thresh=0.1):
+    # cut the reads into read groups
 
     ###begin with every reads in the same group
     clusters = [range(len(read_names))]
-    
-    #go through each steps and seperate them
+
+    # go through each steps and seperate them
     for step in steps:
-        reads1,reads0,cols = step
+        reads1, reads0, cols = step
         new_clusters = []
-        if len(reads0) >0:
+        if len(reads0) > 0:
             for cluster in clusters:
                 clust1 = [c for c in cluster if c in reads1]
                 clust0 = [c for c in cluster if c in reads0]
-                if len(clust1)>0:
+                if len(clust1) > 0:
                     new_clusters.append(clust1)
-                if len(clust0)>0:
+                if len(clust0) > 0:
                     new_clusters.append(clust0)
             clusters = new_clusters
-    
+
     ###remove the clusters with less than 5 reads and put them into remaining reads list
     rem_ = []
     big_clusters = []
+    _number_of_initial_haplotypes = len(clusters)
+    _number_of_low_quality_haplotypes = 0
     for cluster in clusters:
-        if len(cluster)<=5:
-            rem_ = rem_+ list(cluster)
+        if len(cluster) <= 5:
+            rem_ = rem_ + list(cluster)
+            _number_of_low_quality_haplotypes += 1
         else:
             big_clusters.append(cluster)
-            
+
     clusters = big_clusters
 
-    ###calculate the mean vector of each cluster        
+    ###calculate the mean vector of each cluster
     mean_of_clusters = []
     for cluster in clusters:
-        mean_of_clusters.append(np.rint(X_matrix[cluster].sum(axis = 0)/len(cluster))) 
-    
+        mean_of_clusters.append(np.rint(X_matrix[cluster].sum(axis=0) / len(cluster)))
+
     ###put remain reads into its closest cluster
     for read in range(len(read_names)):
         is_clustered = False
@@ -429,40 +665,54 @@ def post_processing(X_matrix, steps, read_names,distance_thresh = 0.1):
                 is_clustered = True
         if not is_clustered:
             rem_.append(read)
-    
+
     if len(rem_) > 0:
         for r in rem_:
             if len(X_matrix[r]) > 0:
-                dist = pairwise_distances([X_matrix[r]]+mean_of_clusters, metric = "hamming")[0][1:len(mean_of_clusters)+1]
-                if len(dist)>0:
+                dist = pairwise_distances(
+                    [X_matrix[r]] + mean_of_clusters, metric="hamming"
+                )[0][1 : len(mean_of_clusters) + 1]
+                if len(dist) > 0:
                     idx_most_similar = np.argmin(dist)
                     if dist[idx_most_similar] < 0.1:
                         clusters[idx_most_similar].append(r)
-    
+
     if len(clusters) > 1:
         mean_of_clusters = []
         for cluster in clusters:
-            mean_of_clusters.append(np.rint(X_matrix[cluster].sum(axis = 0)/len(cluster)))
-        
-        agglo_cl = AgglomerativeClustering(n_clusters=None,metric = 'hamming', linkage = 'complete',distance_threshold=distance_thresh)
+            mean_of_clusters.append(
+                np.rint(X_matrix[cluster].sum(axis=0) / len(cluster))
+            )
+
+        agglo_cl = AgglomerativeClustering(
+            n_clusters=None,
+            metric="hamming",
+            linkage="complete",
+            distance_threshold=distance_thresh,
+        )
         agglo_cl.fit(mean_of_clusters)
         labels = agglo_cl.labels_
         new_clusters = {}
-        for idx,label in enumerate(labels):
+        for idx, label in enumerate(labels):
             if label in new_clusters:
                 new_clusters[label] = new_clusters[label] + clusters[idx]
             else:
-                new_clusters[label] = clusters[idx]    
-        
+                new_clusters[label] = clusters[idx]
+
         clusters = new_clusters.values()
-    
+
     ### match indexes to read names
     result_clusters = []
-    
+
     for cluster in clusters:
         result_clusters.append(np.sort(np.array([read_names[r] for r in cluster])))
-    
-    return result_clusters
+
+    return result_clusters, postprocess_log.PostProcessStats(
+        _number_of_initial_haplotypes,
+        _number_of_low_quality_haplotypes,
+        len(result_clusters),
+    )
+
 
 def parse_arguments():
     """Parse the input arguments and retrieve the choosen resolution method and
@@ -470,114 +720,194 @@ def parse_arguments():
     argparser = ArgumentParser()
 
     argparser.add_argument(
-        '-a', '--assembly', dest='assembly', required=True, default='', type=str,
-        help='Assembly file in gfa format',
+        "-a",
+        "--assembly",
+        dest="assembly",
+        required=True,
+        default="",
+        type=str,
+        help="Assembly file in gfa format",
     )
 
     argparser.add_argument(
-        '-b', '--bam', dest='bam', required=True, default='', type=str,
-        help='Alignment file in BAM format',
+        "-b",
+        "--bam",
+        dest="bam",
+        required=True,
+        default="",
+        type=str,
+        help="Alignment file in BAM format",
     )
 
     argparser.add_argument(
-        "-r", "--reads", dest='reads', required=True, default='', type=str,
+        "-r",
+        "--reads",
+        dest="reads",
+        required=True,
+        default="",
+        type=str,
     )
 
     argparser.add_argument(
-        '-e', '--error_rate', dest='error_rate', required=False, default=0.025, type=float,
-        help='Estimation of the error rate of the data',
+        "-e",
+        "--error_rate",
+        dest="error_rate",
+        required=False,
+        default=0.025,
+        type=float,
+        help="Estimation of the error rate of the data",
     )
 
     argparser.add_argument(
-        '-o', '--out-folder', dest='out', required=True, default='', type=str,
-        help='Name of the output folder',
+        "-o",
+        "--out-folder",
+        dest="out",
+        required=True,
+        default="",
+        type=str,
+        help="Name of the output folder",
     )
 
     argparser.add_argument(
-        '--window', dest='window', required=False, default=5000, type=int,
-        help='Size of window to perform read separation (must be at least twice shorter than average read length) [5000]',
+        "--window",
+        dest="window",
+        required=False,
+        default=5000,
+        type=int,
+        help="Size of window to perform read separation (must be at least twice shorter than average read length) [5000]",
     )
 
     arg = argparser.parse_args()
 
-
     return (arg.bam, arg.error_rate, arg.out, arg.window, arg.reads, arg.assembly)
 
-if __name__ == '__main__':
 
-    print('StrainMiner version ', __version__)
+if __name__ == "__main__":
+    print("StrainMiner version ", __version__)
 
-    file_path,  error_rate, out, window, readsFile, originalAssembly = parse_arguments()
-    #mkdir out
+    file_path, error_rate, out, window, readsFile, originalAssembly = parse_arguments()
+    # mkdir out
     if not os.path.exists(out):
         os.makedirs(out)
-    
-    #mkdir out/tmp
-    if not os.path.exists(out+'/tmp'):
-        os.makedirs(out+'/tmp')
 
-    tmp_dir = out+'/tmp'
+    # mkdir out/tmp
+    if not os.path.exists(out + "/tmp"):
+        os.makedirs(out + "/tmp")
 
-    sol_file = open(out+'/tmp/reads_haplo.gro','w')
+    tmp_dir = out + "/tmp"
+
+    sol_file = open(out + "/tmp/reads_haplo.gro", "w")
 
     start = time.time()
-    file = ps.AlignmentFile(file_path,'rb')
-    contigs = (file.header.to_dict())['SQ']
+    file = ps.AlignmentFile(file_path, "rb")
+    contigs = (file.header.to_dict())["SQ"]
     if len(contigs) == 0:
-        print('ERROR: No contigs found when parsing the BAM file, check the bam file and the indexation of the bam file')
+        print(
+            "ERROR: No contigs found when parsing the BAM file, check the bam file and the indexation of the bam file"
+        )
         sys.exit(1)
-    for num in range(0,len(contigs)):
-        contig_name = contigs[num]['SN']
-        contig_length = contigs[num]['LN']
 
-        print(contig_name, contig_length, ' length')
+    _all_contig_process_stats = contig_log.ContigProcessStatsCollection()
+    for num in range(0, len(contigs)):
+        contig_name: str = contigs[num]["SN"]
+        contig_length: int = contigs[num]["LN"]
+
+        _contig_stats = contig_log.ContigStats(contig_name, contig_length)
+        # TODO do something with contig stats
+
+        print(contig_name, contig_length, " length")
         window = 5000
         filtered_col_threshold = 0.6
         min_row_quality = 5
         min_col_quality = 3
-        list_of_reads = []
+        list_of_reads: list[str] = []
         index_of_reads = {}
         haplotypes = []
 
-        for start_pos in range(0,contig_length,window):
-
+        _ctg_lociwins_stats = lociwin_log.LociWindowStatsCollection()
+        for start_pos in range(0, contig_length, window):
             haplotypes_here = {}
 
-            if start_pos+window <= contig_length:
+            if start_pos + window <= contig_length:
                 # sol_file.write(f'CONTIG\t{contig_name} {start_pos}<->{start_pos+window} \n')
 
-                print(f'Parsing data on contig {contig_name} {start_pos}<->{start_pos+window}')
-                dict_of_sus_pos = get_data(file, contig_name,start_pos,start_pos+window)
-            else : 
+                print(
+                    f"Parsing data on contig {contig_name} {start_pos}<->{start_pos+window}"
+                )
+                dict_of_sus_pos = get_data(
+                    file, contig_name, start_pos, start_pos + window
+                )
+                _end_pos = start_pos + window
+            else:
                 # sol_file.write(f'CONTIG\t{contig_name} {start_pos}<->{contig_length} \n')
 
-                print(f'Parsing data on contig  {contig_name} {start_pos}<->{contig_length}')
-                dict_of_sus_pos = get_data(file, contig_name,start_pos,contig_length)
+                print(
+                    f"Parsing data on contig  {contig_name} {start_pos}<->{contig_length}"
+                )
+                dict_of_sus_pos = get_data(file, contig_name, start_pos, contig_length)
+                _end_pos = contig_length
 
+            _lociwin_stats = lociwin_log.LociWindowStats(
+                start_pos,
+                _end_pos,
+            )
 
             ###create a matrix from the columns
-            df = pd.DataFrame(dict_of_sus_pos) 
+            df = pd.DataFrame(dict_of_sus_pos)
             # select the reads spanning the whole window
-            tmp_idx = df.iloc[:,:len(df.columns)//3].dropna(axis=0, how = 'all')
-            df = df.loc[tmp_idx.index,:]
-            tmp_idx = df.iloc[:,2*len(df.columns)//3:].dropna(axis=0, how = 'all')
-            df = df.loc[tmp_idx.index,:]
-            df = df.dropna(axis = 1, thresh = filtered_col_threshold*(len(df.index)))
+            tmp_idx = df.iloc[:, : len(df.columns) // 3].dropna(axis=0, how="all")
+            df = df.loc[tmp_idx.index, :]
+            tmp_idx = df.iloc[:, 2 * len(df.columns) // 3 :].dropna(axis=0, how="all")
+            df = df.loc[tmp_idx.index, :]
+            df = df.dropna(axis=1, thresh=filtered_col_threshold * (len(df.index)))
             reads = list(df.index)
 
             ###clustering
-            if len(dict_of_sus_pos) > 0 :
+            if len(dict_of_sus_pos) > 0:
                 X_matrix = df.to_numpy()
                 print(X_matrix.shape)
-                matrix,regions,steps = pre_processing(X_matrix,min_col_quality)
-                steps = biclustering_full_matrix(matrix, regions, steps, min_row_quality, min_col_quality,error_rate=0.025)
-                clusters = post_processing(matrix, steps, reads,distance_thresh = 0.05)
+                matrix, regions, steps, _hca_process_stats = pre_processing(
+                    X_matrix, min_col_quality
+                )
+                (
+                    steps,
+                    _qbc_process_stats,
+                ) = biclustering_full_matrix(
+                    matrix,
+                    regions,
+                    steps,
+                    min_row_quality,
+                    min_col_quality,
+                    error_rate=0.025,
+                )
+                clusters, _postprocess_stats = post_processing(
+                    matrix,
+                    steps,
+                    reads,
+                    distance_thresh=0.05,
+                )
+                _ctg_lociwins_stats.append(
+                    lociwin_log.LociWindowProcessStats(
+                        _lociwin_stats,
+                        _hca_process_stats,
+                        _qbc_process_stats,
+                        _postprocess_stats,
+                    )
+                )
+            else:
+                _ctg_lociwins_stats.append(
+                    lociwin_log.LociWindowProcessStats(
+                        _lociwin_stats,
+                        None,
+                        None,
+                        None,
+                    )
+                )
 
-                
             reads_ = []
             labels_ = []
-            if len(dict_of_sus_pos) > 0 and len(clusters) > 1 :
-                for idx,cluster in enumerate(clusters):
+            if len(dict_of_sus_pos) > 0 and len(clusters) > 1:
+                for idx, cluster in enumerate(clusters):
                     for read in cluster:
                         reads_.append(read)
                         labels_.append(idx)
@@ -586,15 +916,15 @@ if __name__ == '__main__':
                             list_of_reads.append(read)
                         haplotypes_here[index_of_reads[read]] = idx
 
-                print('Found', len(clusters), 'groups')
+                print("Found", len(clusters), "groups")
             else:
-                print('No haplotypes found')
+                print("No haplotypes found")
                 for read in df.index:
                     reads_.append(read)
                     labels_.append(-1)
                     if read not in index_of_reads:
-                            index_of_reads[read] = len(list_of_reads)
-                            list_of_reads.append(read)
+                        index_of_reads[read] = len(list_of_reads)
+                        list_of_reads.append(read)
                     haplotypes_here[index_of_reads[read]] = -1
 
             haplotypes.append(haplotypes_here)
@@ -605,31 +935,39 @@ if __name__ == '__main__':
             #     sol_file.write(f'LABELS\t{labels_[0]}')
             #     for i in range(1,len(labels_)):
             #         sol_file.write(f',{labels_[i]}')
-            
-            # sol_file.write(f'\n')   
+
+            # sol_file.write(f'\n')
             end = time.time()
-            print('Elapsed time', end - start)
+            print("Elapsed time", end - start)
 
+        _all_contig_process_stats.append(
+            contig_log.ContigProcessStats(
+                _contig_stats,
+                _ctg_lociwins_stats,
+            )
+        )
 
-        #now write the output file
-        sol_file.write(f'CONTIG\t{contig_name}\t{contig_length}\t1\n')
-        for r in list_of_reads :
-            sol_file.write(f'READ\t{r}\t-1\t-1\t-1\t-1\t-1\n')
+        # now write the output file
+        sol_file.write(f"CONTIG\t{contig_name}\t{contig_length}\t1\n")
+        for r in list_of_reads:
+            sol_file.write(f"READ\t{r}\t-1\t-1\t-1\t-1\t-1\n")
         for w in range(len(haplotypes)):
-            sol_file.write(f'GROUP\t{w*window}\t{min(contig_length, (w+1)*window)}\t')
+            sol_file.write(f"GROUP\t{w*window}\t{min(contig_length, (w+1)*window)}\t")
             haplotypes_list = [-2 for i in range(len(list_of_reads))]
             for r in haplotypes[w].keys():
                 haplotypes_list[r] = haplotypes[w][r]
             haplo_str = ""
             for h in range(len(haplotypes_list)):
                 if haplotypes_list[h] != -2:
-                    sol_file.write(f'{h},')
-                    haplo_str = haplo_str + str(haplotypes_list[h]) + ','
-            sol_file.write(f'\t{haplo_str}\n')
-                
-    sol_file.close()  
+                    sol_file.write(f"{h},")
+                    haplo_str = haplo_str + str(haplotypes_list[h]) + ","
+            sol_file.write(f"\t{haplo_str}\n")
 
-    #now create the new contigs
+    _all_contig_process_stats.to_yaml(Path(out) / "all_contig_process_stats.yaml")
+
+    sol_file.close()
+
+    # now create the new contigs
     gaffile = tmp_dir + "/reads_on_new_contig.gaf"
     zipped_GFA = tmp_dir + "/zipped_assembly.gfa"
     polish_everything = "0"
@@ -637,52 +975,88 @@ if __name__ == '__main__':
     technology = "ont"
     nb_threads = 1
     zipped_GFA = tmp_dir + "/zipped_assembly.gfa"
-    path_to_src = sys.argv[0].split("strainminer.py")[0]+"/"
+    path_to_src = sys.argv[0].split("strainminer.py")[0] + "/"
 
     if path_to_src == "/":
         path_to_src = "./"
 
-    #create the sam file from the bam file
+    # create the sam file from the bam file
     samFile = tmp_dir + "/reads_on_asm.sam"
-    os.system("samtools view -h -o "+samFile+" "+file_path)
+    os.system("samtools view -h -o " + samFile + " " + file_path)
 
-    command = path_to_src + "build/create_new_contigs " \
-        + originalAssembly + " " \
-        + readsFile + " " \
-        + str(error_rate) + " " \
-        + tmp_dir + "/reads_haplo.gro " \
-        + samFile + " " \
-        + tmp_dir + " " \
-        + str(nb_threads) + " " \
-        + technology + " " \
-        + zipped_GFA + " " \
-        + gaffile +  " " \
-        + polisher + " " \
-        + polish_everything \
+    command = (
+        path_to_src
+        + "build/create_new_contigs "
+        + originalAssembly
+        + " "
+        + readsFile
+        + " "
+        + str(error_rate)
+        + " "
+        + tmp_dir
+        + "/reads_haplo.gro "
+        + samFile
+        + " "
+        + tmp_dir
+        + " "
+        + str(nb_threads)
+        + " "
+        + technology
+        + " "
+        + zipped_GFA
+        + " "
+        + gaffile
+        + " "
+        + polisher
+        + " "
+        + polish_everything
         + " minimap2 racon  medaka  samtools  python 0 "
+    )
     print(" Running : ", command)
     res_create_new_contigs = os.system(command)
     if res_create_new_contigs != 0:
         print("ERROR: create_new_contigs failed. Was trying to run: " + command)
         sys.exit(1)
 
-
-    outfile = out.rstrip('/') + "/strainminer_final_assembly.gfa"
+    outfile = out.rstrip("/") + "/strainminer_final_assembly.gfa"
 
     meta = " --meta"
     # if args.multiploid :
     #     meta = ""
 
-    command = "python " + path_to_src + "GraphUnzip/graphunzip.py unzip -l " + gaffile + " -g " + zipped_GFA + " -o " + outfile + " 2>"+tmp_dir+"/logGraphUnzip.txt >"+tmp_dir+"/trash.txt";
-    print( " - Running GraphUnzip with command line:\n     ", command, "\n   The log of GraphUnzip is written on ",tmp_dir+"/logGraphUnzip.txt\n")
+    command = (
+        "python "
+        + path_to_src
+        + "GraphUnzip/graphunzip.py unzip -l "
+        + gaffile
+        + " -g "
+        + zipped_GFA
+        + " -o "
+        + outfile
+        + " 2>"
+        + tmp_dir
+        + "/logGraphUnzip.txt >"
+        + tmp_dir
+        + "/trash.txt"
+    )
+    print(
+        " - Running GraphUnzip with command line:\n     ",
+        command,
+        "\n   The log of GraphUnzip is written on ",
+        tmp_dir + "/logGraphUnzip.txt\n",
+    )
     resultGU = os.system(command)
-    if resultGU != 0 :
-        print( "ERROR: GraphUnzip failed. Please check the output of GraphUnzip in "+tmp_dir+"/logGraphUnzip.txt" )
+    if resultGU != 0:
+        print(
+            "ERROR: GraphUnzip failed. Please check the output of GraphUnzip in "
+            + tmp_dir
+            + "/logGraphUnzip.txt"
+        )
         sys.exit(1)
-    
+
     fasta_name = outfile[0:-4] + ".fasta"
     command = path_to_src + "build/gfa2fa " + outfile + " > " + fasta_name
     res_gfa2fasta = os.system(command)
     if res_gfa2fasta != 0:
         print("ERROR: gfa2fa failed. Was trying to run: " + command)
-        sys.exit(1)  
+        sys.exit(1)
